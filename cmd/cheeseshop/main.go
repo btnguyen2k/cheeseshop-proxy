@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/btnguyen2k/nuget-proxy/internal/config"
-	"github.com/btnguyen2k/nuget-proxy/internal/proxy"
+	"github.com/btnguyen2k/cheeseshop-proxy/internal/config"
+	"github.com/btnguyen2k/cheeseshop-proxy/internal/proxy"
 )
 
 func main() {
@@ -22,13 +22,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := run(ctx, os.Args[1:], logger); err != nil && !errors.Is(err, flag.ErrHelp) {
-		logger.Error("nuget-proxy stopped", "error", err)
+		logger.Error("cheeseshop stopped", "error", err)
 		os.Exit(1)
 	}
 }
 
 func run(ctx context.Context, args []string, logger *slog.Logger) error {
-	flags := flag.NewFlagSet("nuget-proxy", flag.ContinueOnError)
+	flags := flag.NewFlagSet("cheeseshop", flag.ContinueOnError)
 	filename := flags.String("config", "config.yaml", "Path to the YAML configuration file")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -57,13 +57,13 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 	}
 	result := make(chan error, 1)
 	go func() { result <- server.Serve(listener) }()
-	logger.Info("nuget-proxy listening", "listen", cfg.Listen, "source", cfg.PublicBaseURL+"/v3/index.json",
+	logger.Info("cheeseshop listening", "listen", cfg.Listen, "source", cfg.PublicBaseURL+"/simple/",
 		"allow_patterns", len(cfg.Allow), "cache_dir", cfg.Cache.Dir)
 	if len(cfg.Allow) == 0 {
 		logger.Warn("allowlist is empty; no packages are available")
 	}
 	if len(cfg.PublicBaseURL) >= 5 && cfg.PublicBaseURL[:5] == "http:" {
-		logger.Warn("public URL uses HTTP; repository-signature discovery requires HTTPS and is not advertised")
+		logger.Warn("public URL uses HTTP; use HTTPS for shared deployments")
 	}
 	select {
 	case err := <-result:
@@ -72,7 +72,7 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 		}
 		return nil
 	case <-ctx.Done():
-		logger.Info("shutting down")
+		logger.Info("cheeseshop shutting down")
 		shutdownCtx, stop := context.WithTimeout(context.Background(), 30*time.Second)
 		defer stop()
 		if err := server.Shutdown(shutdownCtx); err != nil {

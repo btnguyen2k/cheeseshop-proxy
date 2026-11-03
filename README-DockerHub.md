@@ -1,155 +1,83 @@
-A lightweight, read-only NuGet.org subset feed, implemented in Go. Serve only
-approved package IDs and prefixes, with an on-demand disk cache.
-Supports **NuGet V3** restores with modern .NET tooling; publishing, NuGet V2,
-package search, and Visual Studio package browsing are not supported.
+# cheeseshop
 
-## Quick start
+A lightweight, read-only public PyPI proxy written in Go. Expose approved
+Python projects through the Simple HTML/JSON API with a bounded persistent cache.
+The application is **cheeseshop**; the image repository is **cheeseshop-proxy**.
 
-### Run the pre-built Docker image
+This MVP supports **allow rules only**. Uploads, private hosting, search, block
+rules, and full/offline mirroring are not implemented.
+
+## Run
+
+After an image version has been published, replace `<tag>` with that version:
 
 ```sh
 docker run --rm -p 8080:8080 \
-  --env "NUGET_PROXY_ALLOW=Newtonsoft.Json,Ddth.*" \
-  --env "NUGET_PROXY_PUBLIC_BASE_URL=http://localhost:8080" \
-  --mount "type=volume,source=nuget-proxy-cache,target=/data" \
-  btnguyen2k/nuget-proxy:latest
+  --env "CHEESESHOP_ALLOW=requests,urllib3,idna,charset-normalizer,certifi" \
+  --env "CHEESESHOP_PUBLIC_BASE_URL=http://localhost:8080" \
+  --mount "type=volume,source=cheeseshop-cache,target=/data" \
+  btnguyen2k/cheeseshop-proxy:<tag>
 ```
 
-The container will start the NuGet proxy and make it available at `http://localhost:8080/v3/index.json`.
+Before the first release, build the image from the
+[source repository](https://github.com/btnguyen2k/cheeseshop-proxy).
+The index is available at `http://localhost:8080/simple/`.
 
-The image includes `config.yaml`; environment variables override its settings.
-The volume preserves cached packages between container runs.
-
-## Use with .NET projects
-
-Choose project-local configuration or user-wide source registration. The local
-HTTP examples below use .NET SDK 9 or newer. For shared deployments, use an HTTPS
-feed URL and omit the insecure-connection options.
-
-### Project-local nuget.config
-
-Place `nuget.config` in your solution/repository root, or beside the `.csproj`
-when restoring that project directly:
-
-```xml
-<?xml version="1.0" encoding="utf-8"?>
-<configuration>
-  <packageSources>
-    <clear />
-    <add key="nuget-proxy" value="http://localhost:8080/v3/index.json"
-         allowInsecureConnections="true" />
-  </packageSources>
-  <auditSources>
-    <clear />
-    <add key="nuget-proxy" value="http://localhost:8080/v3/index.json"
-         allowInsecureConnections="true" />
-  </auditSources>
-</configuration>
-```
-
-Then run `dotnet restore` from that directory. `<clear />` removes inherited
-sources so packages and vulnerability audits use the proxy.
-
-### Register a source globally with the .NET CLI
-
-On Linux/macOS, explicitly target your user-level NuGet configuration to make the
-source available across projects:
+For local HTTP development:
 
 ```sh
-dotnet nuget add source "http://localhost:8080/v3/index.json" \
-  --name nuget-proxy --allow-insecure-connections \
-  --configfile "$HOME/.nuget/NuGet/NuGet.Config"
-dotnet restore
+python -m pip install --index-url http://localhost:8080/simple/ \
+  --trusted-host localhost requests
 ```
 
-Project-local settings can override user-wide settings. Adding the source does
-**not** disable existing sources: disable/remove other package feeds if the
-proxy must enforce the subset. Packages already in NuGet's local cache may be
-reused without contacting the proxy.
+Use HTTPS without trusted-host exceptions for shared deployments. Remove other
+indexes and `extra-index-url` settings if the proxy must enforce the approved
+subset. Direct URLs, VCS requirements, and existing client caches can bypass it.
 
-## Configuration
+## Allow rules
 
-The Docker image includes a default configuration file at `/config/config.yaml`.
-It can be customized by replacing it with your own configuration file (e.g. read-only bind mount)
-or by setting environment variables. Every setting has an environment
-override:
+Use `CHEESESHOP_ALLOW="requests,company-*"` or configure `allow` in YAML.
+Names ignore case and normalize runs of `.`, `_`, and `-` to `-`.
+Exact names match one project; terminal `*` matches a literal prefix;
+standalone `"*"` allows all valid projects.
 
-| Setting | Purpose and included value | Environment variable |
-| --- | --- | --- |
-| `listen` | HTTP bind address; `0.0.0.0:8080`. Use `127.0.0.1:8080` for local-only native access. | `NUGET_PROXY_LISTEN` |
-| `public_base_url` | Client-facing base URL; `http://localhost:8080`. May include a path prefix, but not `/v3/index.json`. | `NUGET_PROXY_PUBLIC_BASE_URL` |
-| `allow` | Available package IDs/prefixes; `[]` exposes no packages. | `NUGET_PROXY_ALLOW` |
-| `cache.dir` | Writable cache directory; `.cache`, relative to the working directory (`/data/.cache` in Docker). | `NUGET_PROXY_CACHE_DIR` |
-| `cache.max_bytes` | Total cache-file budget; `1073741824` bytes (1 GiB). | `NUGET_PROXY_CACHE_MAX_BYTES` |
-| `cache.max_object_bytes` | Largest downloadable object; `134217728` bytes (128 MiB). | `NUGET_PROXY_CACHE_MAX_OBJECT_BYTES` |
-| `cache.metadata_ttl` | Metadata refresh interval; `5m`. | `NUGET_PROXY_CACHE_METADATA_TTL` |
-| `upstream.timeout` | Per-fetch deadline, including concurrency waits and download; `2m`. | `NUGET_PROXY_UPSTREAM_TIMEOUT` |
-| `upstream.max_concurrent` | Maximum simultaneous upstream requests, including downloads; `8`. | `NUGET_PROXY_UPSTREAM_MAX_CONCURRENT` |
+The default empty list exposes no packages. Exclusions return **404**, even for
+cached artifacts and previously issued file links. Dependencies, including
+source-build requirements, need their own rules. Prefixes are not publisher
+identity checks. Restart the container after changing rules.
 
-Byte counts are positive base-10 integers, without suffixes such as `MiB`.
-`cache.max_bytes` must exceed `cache.max_object_bytes` by at least 64 KiB.
-Durations use Go syntax, such as `30s`, `5m`, or `2h`, and must be positive.
-Configuration changes require a restart; invalid settings fail startup.
+## Configuration and storage
 
-### Subset rules
+The image includes `/config/config.yaml`. Mount a replacement read-only or
+override its settings with environment variables. Precedence is built-in
+defaults < YAML < environment. Explicitly empty variables override YAML values.
 
-```yaml
-allow:
-  - Newtonsoft.Json
-  - Ddth.*
-```
+| Setting | Environment variable |
+| --- | --- |
+| Bind address | `CHEESESHOP_LISTEN` |
+| External base URL, without `/simple/` | `CHEESESHOP_PUBLIC_BASE_URL` |
+| Comma-separated allow rules | `CHEESESHOP_ALLOW` |
+| Cache directory | `CHEESESHOP_CACHE_DIR` |
+| Cache byte budget | `CHEESESHOP_CACHE_MAX_BYTES` |
+| Maximum index/artifact bytes | `CHEESESHOP_CACHE_MAX_OBJECT_BYTES` |
+| Metadata revalidation TTL | `CHEESESHOP_CACHE_METADATA_TTL` |
+| Upstream deadline | `CHEESESHOP_UPSTREAM_TIMEOUT` |
+| Upstream concurrency | `CHEESESHOP_UPSTREAM_MAX_CONCURRENT` |
 
-- Matching is case-insensitive; any matching rule makes an ID available.
-- Exact IDs match only that package. A terminal `*` matches a literal prefix:
-  `Ddth.*` includes `Ddth.Core`, not `Ddth` or `DdthExtra`.
-- An empty or omitted list exposes no packages. Standalone `*`, regexes, and
-  non-terminal wildcards are rejected.
-- Matching an ID allows all its versions, including prereleases. Dependencies
-  must independently match a rule; allowing a parent does not approve them.
+The default cache is `/data/.cache`, with a 1 GiB budget, 128 MiB object limit,
+and 5-minute metadata TTL. Increase both byte limits for larger wheels/indexes;
+the budget must leave at least 64 KiB beyond the object limit. Byte counts are
+base-10 integers; durations use Go syntax such as `30s` or `5m`.
 
-Packages outside the subset are **unavailable (`404`), not forbidden (`403`)**,
-including packages previously cached by the proxy. Prefixes restrict names,
-not publisher identity.
+Persist `/data`, including its URL-signing key. Bind-mounted storage must be
+writable by UID 65532. Use one process per cache directory. This is an on-demand
+cache, not an offline mirror.
 
-### Environment overrides
+`/healthz` provides liveness; `/readyz` checks cache writability and lightweight
+upstream access. Logs are JSON on stderr. Provide HTTPS and authentication at
+your reverse proxy; set the external base URL, including any path prefix.
 
-Precedence is **built-in defaults < YAML < environment**. Unset variables preserve
-YAML/default values; explicitly set variables override them, even when empty.
-Invalid overrides fail startup with an error naming the variable. The YAML file
-must still exist and parse successfully.
-
-`NUGET_PROXY_ALLOW="Newtonsoft.Json,Ddth.*"` **replaces** the YAML allowlist with
-comma-separated patterns, trimming surrounding whitespace. An explicitly empty
-value clears the list; whitespace-only values and empty entries such as `Ddth.*,`
-are invalid. Do not use JSON/YAML array syntax.
-
-For example, set overrides before starting the binary, or pass them through
-Docker's `--env` option as shown in Quick start:
-
-```sh
-export NUGET_PROXY_CACHE_MAX_BYTES="2147483648"
-export NUGET_PROXY_CACHE_METADATA_TTL="10m"
-```
-
-To return to a YAML value, unset the variable, for example with
-`unset NUGET_PROXY_ALLOW`.
-
-## Deployment and operations
-
-- For shared use, run behind a reverse proxy providing HTTPS and access control.
-  Set `public_base_url` to the external URL and preserve any configured path prefix.
-- Persist `/data` in Docker. Bind-mounted cache directories must be writable by
-  UID 65532. Use one proxy process per cache directory; the cache is not an offline mirror.
-- `/healthz` reports liveness; `/readyz` checks cache writability and usable feed
-  discovery. JSON logs go to stderr, and termination triggers graceful shutdown.
-
-## License
-
-This project is licensed under the MIT License. See the [LICENSE.md](https://github.com/btnguyen2k/nuget-proxy/blob/main/LICENSE.md) file for details.
-
-## Support and Contribution
-
-Feel free to create [pull requests](https://github.com/btnguyen2k/nuget-proxy/pulls) or [issues](https://github.com/btnguyen2k/nuget-proxy/issues) to report bugs or suggest new features.
-Please search the existing issues before filing new ones to avoid duplicates. For new issues, file your bug or feature request as a new issue.
-
-If you find this project useful, please star it.
+Full usage, protocol details, and configuration examples are in the
+[README](https://github.com/btnguyen2k/cheeseshop-proxy#readme).
+MIT licensed; see
+[LICENSE.md](https://github.com/btnguyen2k/cheeseshop-proxy/blob/main/LICENSE.md).

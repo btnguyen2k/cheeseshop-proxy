@@ -8,6 +8,8 @@
 *.so
 *.dylib
 
+.local/
+
 # Test binary, built with `go test -c`
 *.test
 
@@ -30,6 +32,9 @@ go.work.sum
 
 # Cached package content
 .cache/
+
+# Native application binary
+/cheeseshop
 
 # Editor/IDE
 .idea/

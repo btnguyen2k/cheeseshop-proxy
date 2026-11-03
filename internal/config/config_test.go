@@ -10,10 +10,10 @@ import (
 
 func TestDecodeDefaultsAndOverrides(t *testing.T) {
 	cfg, err := Decode(strings.NewReader(`
-public_base_url: https://feed.example.com/nuget/
+public_base_url: https://feed.example.com/python/
 allow:
-  - Newtonsoft.Json
-  - Ddth.*
+  - requests
+  - company-*
 cache:
   metadata_ttl: 3m
 upstream:
@@ -22,7 +22,7 @@ upstream:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.PublicBaseURL != "https://feed.example.com/nuget" || cfg.Listen != "127.0.0.1:8080" ||
+	if cfg.PublicBaseURL != "https://feed.example.com/python" || cfg.Listen != "127.0.0.1:8080" ||
 		cfg.Cache.MetadataTTL != 3*time.Minute || cfg.Cache.MaxBytes != 1<<30 ||
 		cfg.Upstream.Timeout != 2*time.Minute || cfg.Upstream.MaxConcurrent != 4 || len(cfg.Allow) != 2 {
 		t.Fatalf("unexpected configuration: %+v", cfg)
@@ -33,12 +33,12 @@ func TestRejectInvalidConfiguration(t *testing.T) {
 	valid := "public_base_url: https://feed.example.com\n"
 	for name, document := range map[string]string{
 		"missing URL":      "allow: []",
-		"unknown field":    valid + "alow: [Ddth.*]",
+		"unknown field":    valid + "alow: [company-*]",
 		"unknown nested":   valid + "cache:\n  directory: cache",
 		"duplicate field":  valid + "public_base_url: https://other.example.com",
 		"extra document":   valid + "---\nallow: []",
 		"malformed YAML":   valid + "allow: [",
-		"invalid rule":     valid + "allow: ['*']",
+		"invalid rule":     valid + "allow: ['bad*pattern']",
 		"negative TTL":     valid + "cache:\n  metadata_ttl: -1s",
 		"invalid duration": valid + "upstream:\n  timeout: forever",
 		"zero concurrency": valid + "upstream:\n  max_concurrent: 0",
@@ -71,6 +71,13 @@ func TestEmptyAllowlistIsValid(t *testing.T) {
 	cfg, err := Decode(strings.NewReader("public_base_url: http://localhost:8080\nallow: []"))
 	if err != nil || len(cfg.Allow) != 0 {
 		t.Fatalf("empty subset configuration: %+v, %v", cfg, err)
+	}
+}
+
+func TestExplicitAllowAllIsValid(t *testing.T) {
+	cfg, err := Decode(strings.NewReader("public_base_url: http://localhost:8080\nallow: ['*']"))
+	if err != nil || len(cfg.Allow) != 1 || cfg.Allow[0] != "*" {
+		t.Fatalf("explicit allow-all configuration: %+v, %v", cfg, err)
 	}
 }
 

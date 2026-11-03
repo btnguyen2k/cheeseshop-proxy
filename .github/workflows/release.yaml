@@ -37,7 +37,7 @@ env:
   SYNC_BRANCH_PREFIX: 'release-sync'
   TAG_PREFIX: 'v'
   FILE_CHANGELOG: 'RELEASE-NOTES.md'
-  DOCKER_IMAGE: btnguyen2k/nuget-proxy # update your Docker Hub image name here
+  DOCKER_IMAGE: btnguyen2k/cheeseshop-proxy
 
 jobs:
   CheckBackSync:

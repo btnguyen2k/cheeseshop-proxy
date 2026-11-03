@@ -63,8 +63,13 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
       - run: go build ./...
       - run: go test ./...
+        env:
+          CHEESESHOP_PIP_TEST: '1'
 
   PreviewRelease:
     needs: PinCommitSHA
@@ -106,14 +111,21 @@ jobs:
           fetch-depth: 0
       - name: Build Docker image
         run: |
-          docker build --platform "${{ matrix.platform }}" --tag nuget-proxy:ci .
-          test "$(docker image inspect nuget-proxy:ci --format '{{.Os}}/{{.Architecture}}')" = "${{ matrix.platform }}"
+          docker build --platform "${{ matrix.platform }}" --tag cheeseshop:ci .
+          test "$(docker image inspect cheeseshop:ci --format '{{.Os}}/{{.Architecture}}')" = "${{ matrix.platform }}"
       - name: Smoke test Docker image
         shell: bash
         run: |
-          container_id="$(docker run --detach --publish 127.0.0.1:8080:8080 nuget-proxy:ci)"
+          container_id="$(docker run --detach --publish 127.0.0.1:8080:8080 cheeseshop:ci)"
           trap 'docker logs "$container_id"; docker rm --force --volumes "$container_id"' EXIT
           curl --fail --silent --show-error \
             --retry 15 --retry-delay 1 --retry-connrefused --retry-max-time 30 \
             --connect-timeout 2 --max-time 5 \
             http://127.0.0.1:8080/healthz
+          curl --fail --silent --show-error --max-time 10 \
+            --header 'Accept: application/vnd.pypi.simple.v1+json' \
+            http://127.0.0.1:8080/simple/ |
+            python3 -c 'import json, sys; assert json.load(sys.stdin)["projects"] == []'
+          status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --max-time 10 http://127.0.0.1:8080/simple/not-approved/)"
+          test "$status" = 404
