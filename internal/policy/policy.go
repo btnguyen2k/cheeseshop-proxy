@@ -6,47 +6,54 @@ import (
 	"strings"
 )
 
-var packageID = regexp.MustCompile(`^[A-Za-z0-9_]+([.-][A-Za-z0-9_]+)*$`)
+var (
+	projectName = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$`)
+	separators  = regexp.MustCompile(`[-_.]+`)
+)
 
 type Allowlist struct {
+	all      bool
 	exact    map[string]struct{}
 	prefixes []string
 }
 
-func ValidID(id string) bool {
-	return len(id) <= 100 && packageID.MatchString(id)
+func ValidName(name string) bool {
+	return projectName.MatchString(name)
+}
+
+func Normalize(name string) string {
+	return strings.ToLower(separators.ReplaceAllString(name, "-"))
 }
 
 func New(patterns []string) (*Allowlist, error) {
 	list := &Allowlist{exact: make(map[string]struct{})}
 	for _, pattern := range patterns {
-		normalized := strings.ToLower(pattern)
-		if strings.HasSuffix(normalized, "*") {
-			prefix := strings.TrimSuffix(normalized, "*")
-			// A prefix may end at a package-name separator, as in Ddth.*.
-			stem := prefix
-			if strings.HasSuffix(stem, ".") || strings.HasSuffix(stem, "-") {
-				stem = stem[:len(stem)-1]
-			}
-			if prefix == "" || len(prefix) > 100 || !ValidID(stem) || strings.Contains(prefix, "*") {
+		if pattern == "*" {
+			list.all = true
+		} else if strings.HasSuffix(pattern, "*") {
+			prefix := strings.TrimSuffix(pattern, "*")
+			if !ValidName(strings.TrimRight(prefix, "._-")) || strings.Contains(prefix, "*") {
 				return nil, fmt.Errorf("invalid package prefix %q", pattern)
 			}
-			list.prefixes = append(list.prefixes, prefix)
+			list.prefixes = append(list.prefixes, Normalize(prefix))
 		} else {
-			if !ValidID(normalized) {
-				return nil, fmt.Errorf("invalid package ID %q", pattern)
+			if !ValidName(pattern) {
+				return nil, fmt.Errorf("invalid project name %q", pattern)
 			}
-			list.exact[normalized] = struct{}{}
+			list.exact[Normalize(pattern)] = struct{}{}
 		}
 	}
 	return list, nil
 }
 
-func (a *Allowlist) Allows(id string) bool {
-	if !ValidID(id) {
+func (a *Allowlist) Allows(name string) bool {
+	if !ValidName(name) {
 		return false
 	}
-	normalized := strings.ToLower(id)
+	if a.all {
+		return true
+	}
+	normalized := Normalize(name)
 	if _, ok := a.exact[normalized]; ok {
 		return true
 	}

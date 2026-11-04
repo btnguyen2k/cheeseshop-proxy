@@ -6,11 +6,11 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /nuget-proxy ./cmd/nuget-proxy
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /cheeseshop ./cmd/cheeseshop
 
 FROM scratch
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --from=build /nuget-proxy /nuget-proxy
+COPY --from=build /cheeseshop /cheeseshop
 COPY config.yaml /config/config.yaml
 COPY LICENSE.md /LICENSE.md
 # BuildKit creates WORKDIR with the current USER's ownership.
@@ -18,5 +18,5 @@ USER 65532:65532
 WORKDIR /data
 EXPOSE 8080
 VOLUME ["/data"]
-ENTRYPOINT ["/nuget-proxy"]
+ENTRYPOINT ["/cheeseshop"]
 CMD ["-config", "/config/config.yaml"]

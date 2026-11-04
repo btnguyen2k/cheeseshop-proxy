@@ -1,4 +1,4 @@
-module github.com/btnguyen2k/nuget-proxy
+module github.com/btnguyen2k/cheeseshop-proxy
 
 go 1.26.0
 

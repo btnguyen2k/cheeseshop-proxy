@@ -12,18 +12,15 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/btnguyen2k/nuget-proxy/internal/cache"
-	"github.com/btnguyen2k/nuget-proxy/internal/config"
-	"github.com/btnguyen2k/nuget-proxy/internal/policy"
-	"github.com/btnguyen2k/nuget-proxy/internal/upstream"
+	"github.com/btnguyen2k/cheeseshop-proxy/internal/cache"
+	"github.com/btnguyen2k/cheeseshop-proxy/internal/config"
+	"github.com/btnguyen2k/cheeseshop-proxy/internal/policy"
+	"github.com/btnguyen2k/cheeseshop-proxy/internal/upstream"
 )
-
-var packageVersion = regexp.MustCompile(`^[0-9]+(\.[0-9]+){0,3}(-[0-9a-z-]+(\.[0-9a-z-]+)*)?$`)
 
 type Server struct {
 	cfg    config.Config
@@ -33,7 +30,6 @@ type Server struct {
 	client *upstream.Client
 	links  *links
 	prefix string
-	https  bool
 }
 
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*Server, error) {
@@ -67,7 +63,7 @@ func newServer(ctx context.Context, cfg config.Config, logger *slog.Logger, tran
 	return &Server{
 		cfg: cfg, logger: logger, allow: allow, cache: storage, links: linkSigner,
 		client: upstream.New(cfg.Upstream.Timeout, cfg.Upstream.MaxConcurrent, transport),
-		prefix: base.Path + "/v3/", https: base.Scheme == "https",
+		prefix: base.Path,
 	}, nil
 }
 
@@ -92,7 +88,9 @@ func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		s.writeError(response, request, http.StatusMethodNotAllowed)
 		return
 	}
-	if request.URL.RawPath != "" || strings.Contains(request.URL.Path, "\\") {
+	escaped := strings.ToLower(request.URL.RawPath)
+	if strings.ContainsAny(request.URL.Path, "\\\x00\r\n") ||
+		strings.Contains(escaped, "%2f") || strings.Contains(escaped, "%5c") {
 		s.writeError(response, request, http.StatusNotFound)
 		return
 	}
@@ -104,39 +102,32 @@ func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		if err := s.cache.Check(); err != nil {
 			s.logger.Error("cache not ready", "error", err)
 			s.writeError(response, request, http.StatusServiceUnavailable)
-		} else if _, err := s.discover(request.Context()); err != nil {
-			s.logger.Error("upstream discovery not ready", "error", err)
+		} else if err := s.ready(request.Context()); err != nil {
+			s.logger.Error("upstream not ready", "error", err)
 			s.writeError(response, request, http.StatusServiceUnavailable)
 		} else {
 			writeText(response, request, "ready\n")
 		}
 		return
 	}
-	if !strings.HasPrefix(request.URL.Path, s.prefix) {
-		s.writeError(response, request, http.StatusNotFound)
-		return
-	}
-	relative := strings.TrimPrefix(request.URL.Path, s.prefix)
 	var err error
 	switch {
-	case relative == "index.json":
-		var index serviceIndex
-		index, err = s.index(request.Context())
-		if err == nil {
-			err = serveJSON(response, request, index)
+	case request.URL.Path == s.prefix+"/simple":
+		http.Redirect(response, request, s.publicURL("/simple/"), http.StatusPermanentRedirect)
+	case request.URL.Path == s.prefix+"/simple/":
+		err = s.simple(response, request, "")
+	case strings.HasPrefix(request.URL.Path, s.prefix+"/simple/"):
+		name := strings.TrimPrefix(request.URL.Path, s.prefix+"/simple/")
+		name = strings.TrimSuffix(name, "/")
+		if !s.allow.Allows(name) {
+			s.writeError(response, request, http.StatusNotFound)
+		} else if canonical := s.prefix + "/simple/" + policy.Normalize(name) + "/"; request.URL.Path != canonical {
+			http.Redirect(response, request, s.publicURL("/simple/"+policy.Normalize(name)+"/"), http.StatusPermanentRedirect)
+		} else {
+			err = s.simple(response, request, name)
 		}
-	case strings.HasPrefix(relative, "flatcontainer/"):
-		err = s.packageContent(response, request, strings.TrimPrefix(relative, "flatcontainer/"))
-	case relative == "vulnerabilities/index.json":
-		err = s.metadataIndex(response, request, false)
-	case strings.HasPrefix(relative, "vulnerabilities/pages/") && strings.HasSuffix(relative, ".json"):
-		token := strings.TrimSuffix(strings.TrimPrefix(relative, "vulnerabilities/pages/"), ".json")
-		err = s.linkContent(response, request, "audit", token, s.cfg.Cache.MetadataTTL)
-	case relative == "signatures/index.json" && s.https:
-		err = s.metadataIndex(response, request, true)
-	case strings.HasPrefix(relative, "signatures/certificates/") && strings.HasSuffix(relative, ".crt") && s.https:
-		token := strings.TrimSuffix(strings.TrimPrefix(relative, "signatures/certificates/"), ".crt")
-		err = s.linkContent(response, request, "certificate", token, 0)
+	case strings.HasPrefix(request.URL.Path, s.prefix+"/packages/"):
+		err = s.packageContent(response, request, strings.TrimPrefix(request.URL.Path, s.prefix+"/packages/"))
 	default:
 		s.writeError(response, request, http.StatusNotFound)
 	}
@@ -146,73 +137,72 @@ func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 }
 
 func (s *Server) packageContent(writer http.ResponseWriter, request *http.Request, relative string) error {
-	id, normalized, immutable, ok := packagePath(relative)
-	if !ok || !s.allow.Allows(id) {
-		s.logger.Info("package unavailable", "package", id, "reason", "outside_subset_or_invalid_path")
+	parts := strings.Split(relative, "/")
+	if len(parts) != 3 || !s.allow.Allows(parts[0]) || parts[0] != policy.Normalize(parts[0]) {
 		s.writeError(writer, request, http.StatusNotFound)
 		return nil
 	}
-	remote, err := s.discover(request.Context())
-	if err != nil {
-		return err
-	}
-	ttl := s.cfg.Cache.MetadataTTL
-	if immutable {
-		ttl = 0
-	}
-	return s.serveObject(writer, request, remote.packages+normalized, ttl)
-}
-
-func packagePath(relative string) (string, string, bool, bool) {
-	parts := strings.Split(strings.ToLower(relative), "/")
-	id := parts[0]
-	if !policy.ValidID(id) {
-		return id, "", false, false
-	}
-	if len(parts) == 2 && parts[1] == "index.json" {
-		return id, strings.Join(parts, "/"), false, true
-	}
-	if len(parts) != 3 || len(parts[1]) > 256 || !packageVersion.MatchString(parts[1]) {
-		return id, "", false, false
-	}
-	if parts[2] != id+".nuspec" && parts[2] != id+"."+parts[1]+".nupkg" {
-		return id, "", false, false
-	}
-	return id, strings.Join(parts, "/"), true, true
-}
-
-func (s *Server) metadataIndex(writer http.ResponseWriter, request *http.Request, signatures bool) error {
-	remote, err := s.discover(request.Context())
-	if err != nil {
-		return err
-	}
-	var document any
-	if signatures {
-		if remote.signatures == "" {
-			s.writeError(writer, request, http.StatusNotFound)
-			return nil
-		}
-		document, err = s.signaturesIndex(request.Context(), remote.signatures)
-	} else {
-		if remote.audit == "" {
-			s.writeError(writer, request, http.StatusNotFound)
-			return nil
-		}
-		document, err = s.auditIndex(request.Context(), remote.audit)
-	}
-	if err != nil {
-		return err
-	}
-	return serveJSON(writer, request, document)
-}
-
-func (s *Server) linkContent(writer http.ResponseWriter, request *http.Request, purpose, token string, ttl time.Duration) error {
-	rawURL, ok := s.links.resolve(purpose, token)
+	rawURL, ok := s.links.resolve("artifact:"+parts[0], parts[1])
 	if !ok {
 		s.writeError(writer, request, http.StatusNotFound)
 		return nil
 	}
-	return s.serveObject(writer, request, rawURL, ttl)
+	remote, err := url.Parse(rawURL)
+	if err != nil || upstream.ValidateURL(rawURL) != nil || !strings.EqualFold(remote.Hostname(), upstream.ArtifactHost) {
+		s.writeError(writer, request, http.StatusNotFound)
+		return nil
+	}
+	filename := remote.Path[strings.LastIndex(remote.Path, "/")+1:]
+	if !validFilename(filename) || (parts[2] != filename && parts[2] != filename+".metadata") {
+		s.writeError(writer, request, http.StatusNotFound)
+		return nil
+	}
+	if parts[2] == filename+".metadata" {
+		remote.Path += ".metadata"
+		remote.RawPath = ""
+	}
+	return s.serveObject(writer, request, remote.String(), 0)
+}
+
+func (s *Server) ready(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, s.cfg.Upstream.Timeout)
+	defer cancel()
+	response, err := s.client.Head(ctx)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return &cache.HTTPError{StatusCode: response.StatusCode}
+	}
+	return validateContentType(response.Header.Get("Content-Type"))
+}
+
+func (s *Server) simple(writer http.ResponseWriter, request *http.Request, name string) error {
+	writer.Header().Set("Vary", "Accept")
+	contentType, ok := negotiate(request.Header.Get("Accept"))
+	if !ok {
+		s.writeError(writer, request, http.StatusNotAcceptable)
+		return nil
+	}
+	if name == "" {
+		document, err := s.projectList(request.Context())
+		if err != nil {
+			return err
+		}
+		if contentType == upstream.JSONType {
+			return serveJSON(writer, request, document, contentType)
+		}
+		return serveBytes(writer, request, s.projectListHTML(document), contentType)
+	}
+	document, err := s.project(request.Context(), name)
+	if err != nil {
+		return err
+	}
+	if contentType == upstream.JSONType {
+		return serveJSON(writer, request, document, contentType)
+	}
+	return serveBytes(writer, request, projectHTML(document), contentType)
 }
 
 func (s *Server) get(ctx context.Context, rawURL string, ttl time.Duration) (*cache.Object, error) {
@@ -248,7 +238,7 @@ func (s *Server) closeObject(object *cache.Object) {
 }
 
 func (s *Server) publicURL(suffix string) string {
-	return s.cfg.PublicBaseURL + "/v3" + suffix
+	return s.cfg.PublicBaseURL + suffix
 }
 
 func (s *Server) respondError(writer http.ResponseWriter, request *http.Request, err error) {
@@ -297,14 +287,18 @@ func (s *Server) writeError(writer http.ResponseWriter, request *http.Request, s
 	}
 }
 
-func serveJSON(writer http.ResponseWriter, request *http.Request, value any) error {
+func serveJSON(writer http.ResponseWriter, request *http.Request, value any, contentType string) error {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("encode response: %w", err)
 	}
+	return serveBytes(writer, request, data, contentType)
+}
+
+func serveBytes(writer http.ResponseWriter, request *http.Request, data []byte, contentType string) error {
 	sum := sha256.Sum256(data)
 	writer.Header().Set("ETag", `"`+hex.EncodeToString(sum[:])+`"`)
-	writer.Header().Set("Content-Type", "application/json")
+	writer.Header().Set("Content-Type", contentType)
 	http.ServeContent(writer, request, request.URL.Path, time.Time{}, bytes.NewReader(data))
 	return nil
 }
