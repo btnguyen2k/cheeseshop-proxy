@@ -1,5 +1,7 @@
 # cheeseshop
 
+**Version:** v0.1.0
+
 [![Actions Status](https://github.com/btnguyen2k/cheeseshop-proxy/actions/workflows/ci.yaml/badge.svg)](https://github.com/btnguyen2k/cheeseshop-proxy/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE.md)
 
