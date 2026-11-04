@@ -243,7 +243,7 @@ func (failingReader) Read([]byte) (int, error) { return 0, errors.New("connectio
 func TestLoadCleansOnlyOwnedIncompleteOrInvalidFiles(t *testing.T) {
 	directory := t.TempDir()
 	invalid := digest("invalid") + "-123.cache"
-	for _, name := range []string{invalid, "nuget-cache-orphan.tmp", "unrelated.txt"} {
+	for _, name := range []string{invalid, "cheeseshop-cache-orphan.tmp", "unrelated.txt"} {
 		if err := os.WriteFile(filepath.Join(directory, name), []byte("invalid"), 0600); err != nil {
 			t.Fatal(err)
 		}

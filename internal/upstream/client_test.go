@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -17,17 +18,22 @@ func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) 
 
 func TestValidateURL(t *testing.T) {
 	for _, rawURL := range []string{
-		IndexURL, "https://nuget.org/test", "https://data.nuget.org/v3/index.json", "https://API.NUGET.ORG:443/package",
+		IndexURL, "https://pypi.org/simple/requests/", "https://PYPI.ORG:443/simple/requests/",
+		"https://files.pythonhosted.org/packages/file.whl",
 	} {
 		if err := ValidateURL(rawURL); err != nil {
 			t.Errorf("rejected %q: %v", rawURL, err)
 		}
 	}
+	credentialURL, _ := url.Parse(IndexURL)
+	credentialURL.User = url.User("fixture")
 	for _, rawURL := range []string{
-		"http://api.nuget.org/package", "https://api.nuget.org.evil.example/package",
-		"https://evilnuget.org/package", "https://127.0.0.1/package", "https://api.nuget.org:444/package",
-		"https://user:password@api.nuget.org/package", "https://api.nuget.org/package#fragment",
-		"https://api.nuget.org/a\\b", "/relative", "https://",
+		"http://pypi.org/simple/", "https://pypi.org.evil.example/simple/",
+		"https://evilpypi.org/simple/", "https://127.0.0.1/simple/", "https://pypi.org:444/simple/",
+		credentialURL.String(), "https://pypi.org/simple/#fragment", "https://pypi.org/simple/a\\b",
+		"/relative", "https://", "https://pypi.org/admin/", "https://files.pythonhosted.org/private/",
+		"https://other.pythonhosted.org/packages/file.whl",
+		"https://files.pythonhosted.org/packages/a/../file.whl",
 	} {
 		if err := ValidateURL(rawURL); err == nil {
 			t.Errorf("accepted %q", rawURL)
@@ -39,8 +45,9 @@ func TestConcurrencyIncludesResponseBody(t *testing.T) {
 	var calls atomic.Int32
 	client := New(time.Second, 2, roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		calls.Add(1)
-		if request.Header.Get("If-None-Match") != `"etag"` || request.Header.Get("If-Modified-Since") != "date" {
-			t.Error("missing revalidation headers")
+		if request.Header.Get("If-None-Match") != `"etag"` || request.Header.Get("If-Modified-Since") != "date" ||
+			request.Header.Get("Accept") != JSONType || request.Header.Get("User-Agent") != "cheeseshop" {
+			t.Error("missing revalidation or Simple API headers")
 		}
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("data"))}, nil
 	}))
@@ -72,19 +79,23 @@ func TestConcurrencyIncludesResponseBody(t *testing.T) {
 	third.Body.Close()
 }
 
-func TestRedirectCannotLeaveNuGet(t *testing.T) {
-	var calls atomic.Int32
-	client := New(time.Second, 1, roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		calls.Add(1)
-		return &http.Response{
-			StatusCode: http.StatusFound, Header: http.Header{"Location": {"https://example.com/package"}},
-			Body: io.NopCloser(strings.NewReader("")), Request: request,
-		}, nil
-	}))
-	if _, err := client.Get(context.Background(), IndexURL, "", ""); err == nil {
-		t.Fatal("redirect outside NuGet.org was accepted")
-	}
-	if calls.Load() != 1 {
-		t.Fatalf("redirect target was contacted: %d requests", calls.Load())
+func TestRedirectCannotChangeResourceHost(t *testing.T) {
+	for _, target := range []string{"https://example.com/package", "https://files.pythonhosted.org/packages/file.whl"} {
+		t.Run(target, func(t *testing.T) {
+			var calls atomic.Int32
+			client := New(time.Second, 1, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				calls.Add(1)
+				return &http.Response{
+					StatusCode: http.StatusFound, Header: http.Header{"Location": {target}},
+					Body: http.NoBody, Request: request,
+				}, nil
+			}))
+			if _, err := client.Get(context.Background(), IndexURL, "", ""); err == nil {
+				t.Fatal("redirect outside the PyPI index host was accepted")
+			}
+			if calls.Load() != 1 {
+				t.Fatalf("redirect target was contacted: %d requests", calls.Load())
+			}
+		})
 	}
 }

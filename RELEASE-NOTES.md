@@ -1,13 +1,9 @@
-# nuget-proxy release notes
+# cheeseshop release notes
 
-## 2026-10-21 - v0.1.0
+## 2026-11-04 - v0.1.0
 
 ### Added/Refactoring/Deprecation
 
-- Feat(audit): proxy vulnerability indexes and pages through feed-local URLs
-- Feat(cache): add bounded persistent LRU caching with request coalescing
-- Feat(config): add strictly validated YAML configuration
-- Feat(ops): add health probes, structured logging, and graceful shutdown
-- Feat(policy): allow case-insensitive package IDs and prefixes with 404 for exclusions
-- Feat(proxy): add read-only NuGet V3 package restore support
-- Feat(signatures): proxy repository signing metadata and certificates
+- Feat(cache): reduce repeated PyPI downloads with a shared local cache
+- Feat(policy): restrict proxied packages and dependencies to approved projects
+- Feat(proxy): enable pip installs through the cheeseshop PyPI proxy

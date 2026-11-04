@@ -1,175 +1,195 @@
-[![Release](https://img.shields.io/github/release/btnguyen2k/nuget-proxy.svg?style=flat-square)](RELEASE-NOTES.md)
-[![Actions Status](https://github.com/btnguyen2k/nuget-proxy/actions/workflows/ci.yaml/badge.svg)](https://github.com/btnguyen2k/nuget-proxy/actions)
+# cheeseshop
+
+**Version:** v0.1.0
+
+[![Actions Status](https://github.com/btnguyen2k/cheeseshop-proxy/actions/workflows/ci.yaml/badge.svg)](https://github.com/btnguyen2k/cheeseshop-proxy/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE.md)
 
-A lightweight, read-only NuGet.org subset feed, implemented in Go. Serve only
-approved package IDs and prefixes, with an on-demand disk cache.
-Supports **NuGet V3** restores with modern .NET tooling; publishing, NuGet V2,
-package search, and Visual Studio package browsing are not supported.
+**cheeseshop** is a standalone, lightweight, read-only proxy for public PyPI,
+implemented in Go. Expose only approved Python projects through the Simple
+Repository API, with an on-demand bounded disk cache. The repository and Docker
+image are named `cheeseshop-proxy`; the application and executable are named
+`cheeseshop`.
+
+The initial implementation supports **allow rules only**. Block rules, uploads,
+private package hosting, search, and full/offline mirroring are not implemented.
 
 ## Quick start
 
-The following examples use POSIX shell syntax (`sh`/`bash`). Both approaches expose the feed at
-`http://localhost:8080/v3/index.json`.
+These examples use POSIX shell syntax. The package index is
+`http://localhost:8080/simple/`.
 
 ### Build and run from source
 
 Requires Go 1.26 or newer:
 
 ```sh
-git clone https://github.com/btnguyen2k/nuget-proxy.git
-cd nuget-proxy
-export NUGET_PROXY_LISTEN="127.0.0.1:8080"
-export NUGET_PROXY_ALLOW="Newtonsoft.Json,Ddth.*"
-go build -o ./nuget-proxy ./cmd/nuget-proxy
-./nuget-proxy -config ./config.yaml
+git clone https://github.com/btnguyen2k/cheeseshop-proxy.git
+cd cheeseshop-proxy
+export CHEESESHOP_LISTEN="127.0.0.1:8080"
+export CHEESESHOP_ALLOW="requests,urllib3,idna,charset-normalizer,certifi"
+go build -o ./cheeseshop ./cmd/cheeseshop
+./cheeseshop -config ./config.yaml
 ```
 
-### Run the pre-built Docker image
+### Run with Docker
 
-No Go toolchain or local configuration file is required:
+Build the image locally until the first cheeseshop image has been published:
 
 ```sh
+docker build -t cheeseshop:local .
 docker run --rm -p 8080:8080 \
-  --env "NUGET_PROXY_ALLOW=Newtonsoft.Json,Ddth.*" \
-  --env "NUGET_PROXY_PUBLIC_BASE_URL=http://localhost:8080" \
-  --mount "type=volume,source=nuget-proxy-cache,target=/data" \
-  btnguyen2k/nuget-proxy:latest
+  --env "CHEESESHOP_ALLOW=requests,urllib3,idna,charset-normalizer,certifi" \
+  --env "CHEESESHOP_PUBLIC_BASE_URL=http://localhost:8080" \
+  --mount "type=volume,source=cheeseshop-cache,target=/data" \
+  cheeseshop:local
 ```
 
-The image includes `config.yaml`; environment variables override its settings.
-The volume preserves cached packages between container runs.
+The publishing workflow targets `btnguyen2k/cheeseshop-proxy`. The image includes
+`config.yaml`; environment variables override it. The volume preserves cached
+content and the local URL-signing key between container runs.
 
-## Use with .NET projects
+## Use with pip
 
-Choose project-local configuration or user-wide source registration. The local
-HTTP examples below use .NET SDK 9 or newer. For shared deployments, use an HTTPS
-feed URL and omit the insecure-connection options.
-
-### Project-local nuget.config
-
-Place `nuget.config` in your solution/repository root, or beside the `.csproj`
-when restoring that project directly:
-
-```xml
-<?xml version="1.0" encoding="utf-8"?>
-<configuration>
-  <packageSources>
-    <clear />
-    <add key="nuget-proxy" value="http://localhost:8080/v3/index.json"
-         allowInsecureConnections="true" />
-  </packageSources>
-  <auditSources>
-    <clear />
-    <add key="nuget-proxy" value="http://localhost:8080/v3/index.json"
-         allowInsecureConnections="true" />
-  </auditSources>
-</configuration>
-```
-
-Then run `dotnet restore` from that directory. `<clear />` removes inherited
-sources so packages and vulnerability audits use the proxy.
-
-### Register a source globally with the .NET CLI
-
-On Linux/macOS, explicitly target your user-level NuGet configuration to make the
-source available across projects:
+For local development:
 
 ```sh
-dotnet nuget add source "http://localhost:8080/v3/index.json" \
-  --name nuget-proxy --allow-insecure-connections \
-  --configfile "$HOME/.nuget/NuGet/NuGet.Config"
-dotnet restore
+python -m pip install \
+  --index-url http://localhost:8080/simple/ \
+  --trusted-host localhost \
+  requests
 ```
 
-Project-local settings can override user-wide settings. Adding the source does
-**not** disable existing sources: disable/remove other package feeds if the
-proxy must enforce the subset. Packages already in NuGet's local cache may be
-reused without contacting the proxy.
+The trusted-host exception is for local HTTP only. Shared deployments should use
+HTTPS without this exception:
 
-## Configuration
+```sh
+python -m pip install --index-url https://packages.example.com/simple/ requests
+export PIP_INDEX_URL="https://packages.example.com/simple/"
+```
 
-Use [`config.yaml`](config.yaml) for native runs. The Docker image includes the
-same file at `/config/config.yaml`; optionally replace it with a read-only bind
-mount. Settings are documented inline, and every setting has an environment
-override:
+Alternatively, include the index in a requirements file:
 
-| Setting | Purpose and included value | Environment variable |
-| --- | --- | --- |
-| `listen` | HTTP bind address; `0.0.0.0:8080`. Use `127.0.0.1:8080` for local-only native access. | `NUGET_PROXY_LISTEN` |
-| `public_base_url` | Client-facing base URL; `http://localhost:8080`. May include a path prefix, but not `/v3/index.json`. | `NUGET_PROXY_PUBLIC_BASE_URL` |
-| `allow` | Available package IDs/prefixes; `[]` exposes no packages. | `NUGET_PROXY_ALLOW` |
-| `cache.dir` | Writable cache directory; `.cache`, relative to the working directory (`/data/.cache` in Docker). | `NUGET_PROXY_CACHE_DIR` |
-| `cache.max_bytes` | Total cache-file budget; `1073741824` bytes (1 GiB). | `NUGET_PROXY_CACHE_MAX_BYTES` |
-| `cache.max_object_bytes` | Largest downloadable object; `134217728` bytes (128 MiB). | `NUGET_PROXY_CACHE_MAX_OBJECT_BYTES` |
-| `cache.metadata_ttl` | Metadata refresh interval; `5m`. | `NUGET_PROXY_CACHE_METADATA_TTL` |
-| `upstream.timeout` | Per-fetch deadline, including concurrency waits and download; `2m`. | `NUGET_PROXY_UPSTREAM_TIMEOUT` |
-| `upstream.max_concurrent` | Maximum simultaneous upstream requests, including downloads; `8`. | `NUGET_PROXY_UPSTREAM_MAX_CONCURRENT` |
+```text
+--index-url https://packages.example.com/simple/
+requests
+```
 
-Byte counts are positive base-10 integers, without suffixes such as `MiB`.
-`cache.max_bytes` must exceed `cache.max_object_bytes` by at least 64 KiB.
-Durations use Go syntax, such as `30s`, `5m`, or `2h`, and must be positive.
-Configuration changes require a restart; invalid settings fail startup.
+`python -m pip config --user set global.index-url https://packages.example.com/simple/`
+sets a user-wide default. Project, environment, and command-line settings can
+override it. `PIP_INDEX_URL` configures pip; `CHEESESHOP_*` configures the server.
 
-### Subset rules
+Remove other configured indexes, including `extra-index-url`, if the proxy must
+be the only package source. Adding the proxy as an extra index does not enforce
+its allowlist. Direct URL/VCS requirements and already-cached or installed client
+packages can bypass the proxy; network/client policy is needed to prevent that.
+
+## Allow rules
 
 ```yaml
 allow:
-  - Newtonsoft.Json
-  - Ddth.*
+  - requests
+  - company-*
 ```
 
-- Matching is case-insensitive; any matching rule makes an ID available.
-- Exact IDs match only that package. A terminal `*` matches a literal prefix:
-  `Ddth.*` includes `Ddth.Core`, not `Ddth` or `DdthExtra`.
-- An empty or omitted list exposes no packages. Standalone `*`, regexes, and
+- Exact names match one normalized project. Case is ignored, and any run of
+  `.`, `_`, and `-` becomes a single `-`: `Friendly_Bard`, `friendly.bard`, and
+  `friendly--bard` all identify `friendly-bard`.
+- A terminal `*` matches a literal normalized prefix. `company-*` matches
+  `company-core` and `company.core`, but not `company` or `companyextra`.
+  `partial*` also matches `partial` itself.
+- Standalone `"*"` explicitly allows every valid project. Quote it in YAML.
+- Empty or omitted `allow` exposes no packages. Invalid names, regexes, and
   non-terminal wildcards are rejected.
-- Matching an ID allows all its versions, including prereleases. Dependencies
-  must independently match a rule; allowing a parent does not approve them.
+- Allowing a project permits all its versions. Runtime dependencies and
+  source-build dependencies require their own matching rules.
 
-Packages outside the subset are **unavailable (`404`), not forbidden (`403`)**,
-including packages previously cached by the proxy. Prefixes restrict names,
-not publisher identity.
+Excluded projects return **404, not 403**, including previously cached files and
+previously issued download links. Rule changes require a restart. Prefixes
+restrict names, not publisher identity. There is no `block` setting in this MVP.
 
-### Environment overrides
+## Protocol and caching
 
-Precedence is **built-in defaults < YAML < environment**. Unset variables preserve
-YAML/default values; explicitly set variables override them, even when empty.
-Invalid overrides fail startup with an error naming the variable. The YAML file
-must still exist and parse successfully.
+`/simple/` lists permitted projects; `/simple/<normalized-name>/` lists their
+distributions. The server negotiates Simple HTML/JSON, preserves Requires-Python,
+yanked reasons and hashes, and proxies wheels, source archives, and advertised
+PEP 658/714 core metadata. Local file URLs remain project-bound across restarts;
+downloads never redirect installers to the upstream CDN.
 
-`NUGET_PROXY_ALLOW="Newtonsoft.Json,Ddth.*"` **replaces** the YAML allowlist with
-comma-separated patterns, trimming surrounding whitespace. An explicitly empty
-value clears the list; whitespace-only values and empty entries such as `Ddth.*,`
-are invalid. Do not use JSON/YAML array syntax.
+Metadata is fetched as Simple JSON from `pypi.org`; artifacts are restricted to
+`files.pythonhosted.org`. The server advertises at most Simple API 1.1 and does
+not advertise unsupported provenance/signature resources. Python installers
+select versions/platforms and resolve dependencies; cheeseshop does not modify
+archives or dependency declarations.
 
-For example, set overrides before starting the binary, or pass them through
-Docker's `--env` option as shown in Quick start:
+Project metadata is revalidated on its TTL, including yanked-state changes.
+Immutable downloads remain cached until evicted. Concurrent misses share a
+fetch. Expired metadata does not silently hide upstream failures.
 
-```sh
-export NUGET_PROXY_CACHE_MAX_BYTES="2147483648"
-export NUGET_PROXY_CACHE_METADATA_TTL="10m"
-```
+The root catalog is fetched only when a nonempty allowlist's `/simple/` listing
+is requested, then streamed from the disk cache and filtered. It is not a full
+package mirror. Large indexes and wheels must fit the configured object/cache
+limits; increase both limits together if necessary.
 
-To return to a YAML value, unset the variable, for example with
-`unset NUGET_PROXY_ALLOW`.
+## Configuration
+
+Use [`config.yaml`](config.yaml) for native runs. The image includes the same file
+at `/config/config.yaml`, which can be replaced with a read-only bind mount.
+
+| Setting | Default or included value | Environment variable |
+| --- | --- | --- |
+| `listen` | Included `0.0.0.0:8080`; built-in default `127.0.0.1:8080` | `CHEESESHOP_LISTEN` |
+| `public_base_url` | Required; included `http://localhost:8080` | `CHEESESHOP_PUBLIC_BASE_URL` |
+| `allow` | `[]`; no packages exposed | `CHEESESHOP_ALLOW` |
+| `cache.dir` | `.cache`, relative to the working directory | `CHEESESHOP_CACHE_DIR` |
+| `cache.max_bytes` | `1073741824` (1 GiB) | `CHEESESHOP_CACHE_MAX_BYTES` |
+| `cache.max_object_bytes` | `134217728` (128 MiB) | `CHEESESHOP_CACHE_MAX_OBJECT_BYTES` |
+| `cache.metadata_ttl` | `5m` | `CHEESESHOP_CACHE_METADATA_TTL` |
+| `upstream.timeout` | `2m`, including concurrency waits and downloads | `CHEESESHOP_UPSTREAM_TIMEOUT` |
+| `upstream.max_concurrent` | `8`, including active response bodies | `CHEESESHOP_UPSTREAM_MAX_CONCURRENT` |
+
+`public_base_url` may include an ingress path prefix, for example
+`https://packages.example.com/python`, but must not include `/simple/`.
+Generated index and file URLs preserve that prefix.
+
+Precedence is **built-in defaults < YAML < environment**. The YAML file must exist
+and parse successfully. Unset variables preserve YAML/default values; explicitly
+empty values override them and are validated.
+
+`CHEESESHOP_ALLOW="requests,company-*"` replaces the YAML list. Surrounding spaces
+are trimmed; an empty value clears it. Empty entries and JSON/YAML array syntax
+in this variable are invalid. Unset the variable to restore the YAML setting.
+
+Byte counts are positive base-10 integers without unit suffixes.
+`cache.max_bytes` must exceed `cache.max_object_bytes` by at least 64 KiB.
+Durations use positive Go values such as `30s`, `5m`, or `2h`.
+Invalid configuration fails startup.
 
 ## Deployment and operations
 
-- For shared use, run behind a reverse proxy providing HTTPS and access control.
-  Set `public_base_url` to the external URL and preserve any configured path prefix.
-- Persist `/data` in Docker. Bind-mounted cache directories must be writable by
-  UID 65532. Use one proxy process per cache directory; the cache is not an offline mirror.
-- `/healthz` reports liveness; `/readyz` checks cache writability and usable feed
-  discovery. JSON logs go to stderr, and termination triggers graceful shutdown.
+- For shared access, provide HTTPS and access control at a reverse proxy.
+- Persist `/data` in Docker. Its cache must be writable by UID 65532; the default
+  cache location is `/data/.cache`. Use one process per cache directory.
+- `/healthz` reports liveness without upstream access. `/readyz` checks cache
+  writability and performs a lightweight upstream HEAD request.
+- JSON logs go to stderr; termination triggers graceful shutdown.
+
+## Development
+
+Run `go build ./...` and `go test ./...`. Real pip integration uses generated
+local wheels/source distributions, with no public-PyPI fallback:
+
+```sh
+CHEESESHOP_PIP_TEST=1 go test ./internal/proxy -run TestPipInstall -count=1
+```
+
+Python with pip is required for this opt-in suite, and CI enables it explicitly.
+Python is not required in the server container.
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE.md](LICENSE.md) file for details.
+MIT licensed; see [LICENSE.md](LICENSE.md).
 
-## Support and Contribution
-
-Feel free to create [pull requests](https://github.com/btnguyen2k/nuget-proxy/pulls) or [issues](https://github.com/btnguyen2k/nuget-proxy/issues) to report bugs or suggest new features.
-Please search the existing issues before filing new ones to avoid duplicates. For new issues, file your bug or feature request as a new issue.
-
-If you find this project useful, please star it.
+Report bugs and propose changes through this repository's
+[issues](https://github.com/btnguyen2k/cheeseshop-proxy/issues) and
+[pull requests](https://github.com/btnguyen2k/cheeseshop-proxy/pulls).

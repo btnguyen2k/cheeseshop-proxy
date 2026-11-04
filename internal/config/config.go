@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/btnguyen2k/nuget-proxy/internal/policy"
+	"github.com/btnguyen2k/cheeseshop-proxy/internal/policy"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -105,15 +105,15 @@ func (c *Config) applyEnv(lookup func(string) (string, bool)) error {
 		name  string
 		value *string
 	}{
-		{"NUGET_PROXY_LISTEN", &c.Listen},
-		{"NUGET_PROXY_PUBLIC_BASE_URL", &c.PublicBaseURL},
-		{"NUGET_PROXY_CACHE_DIR", &c.Cache.Dir},
+		{"CHEESESHOP_LISTEN", &c.Listen},
+		{"CHEESESHOP_PUBLIC_BASE_URL", &c.PublicBaseURL},
+		{"CHEESESHOP_CACHE_DIR", &c.Cache.Dir},
 	} {
 		if value, ok := lookup(setting.name); ok {
 			*setting.value = value
 		}
 	}
-	if value, ok := lookup("NUGET_PROXY_ALLOW"); ok {
+	if value, ok := lookup("CHEESESHOP_ALLOW"); ok {
 		c.Allow = []string{}
 		if value != "" {
 			c.Allow = strings.Split(value, ",")
@@ -126,8 +126,8 @@ func (c *Config) applyEnv(lookup func(string) (string, bool)) error {
 		name  string
 		value *int64
 	}{
-		{"NUGET_PROXY_CACHE_MAX_BYTES", &c.Cache.MaxBytes},
-		{"NUGET_PROXY_CACHE_MAX_OBJECT_BYTES", &c.Cache.MaxObjectBytes},
+		{"CHEESESHOP_CACHE_MAX_BYTES", &c.Cache.MaxBytes},
+		{"CHEESESHOP_CACHE_MAX_OBJECT_BYTES", &c.Cache.MaxObjectBytes},
 	} {
 		if value, ok := lookup(setting.name); ok {
 			parsed, err := strconv.ParseInt(value, 10, 64)
@@ -141,8 +141,8 @@ func (c *Config) applyEnv(lookup func(string) (string, bool)) error {
 		name  string
 		value *time.Duration
 	}{
-		{"NUGET_PROXY_CACHE_METADATA_TTL", &c.Cache.MetadataTTL},
-		{"NUGET_PROXY_UPSTREAM_TIMEOUT", &c.Upstream.Timeout},
+		{"CHEESESHOP_CACHE_METADATA_TTL", &c.Cache.MetadataTTL},
+		{"CHEESESHOP_UPSTREAM_TIMEOUT", &c.Upstream.Timeout},
 	} {
 		if value, ok := lookup(setting.name); ok {
 			parsed, err := time.ParseDuration(value)
@@ -152,10 +152,10 @@ func (c *Config) applyEnv(lookup func(string) (string, bool)) error {
 			*setting.value = parsed
 		}
 	}
-	if value, ok := lookup("NUGET_PROXY_UPSTREAM_MAX_CONCURRENT"); ok {
+	if value, ok := lookup("CHEESESHOP_UPSTREAM_MAX_CONCURRENT"); ok {
 		parsed, err := strconv.Atoi(value)
 		if err != nil {
-			return fmt.Errorf("NUGET_PROXY_UPSTREAM_MAX_CONCURRENT must be an integer: %w", err)
+			return fmt.Errorf("CHEESESHOP_UPSTREAM_MAX_CONCURRENT must be an integer: %w", err)
 		}
 		c.Upstream.MaxConcurrent = parsed
 	}
@@ -165,49 +165,49 @@ func (c *Config) applyEnv(lookup func(string) (string, bool)) error {
 func (c Config) Validate() error {
 	_, port, err := net.SplitHostPort(c.Listen)
 	if err != nil {
-		return fmt.Errorf("listen (NUGET_PROXY_LISTEN): invalid listen address: %w", err)
+		return fmt.Errorf("listen (CHEESESHOP_LISTEN): invalid listen address: %w", err)
 	}
 	number, err := strconv.Atoi(port)
 	if err != nil || number < 1 || number > 65535 {
-		return errors.New("listen (NUGET_PROXY_LISTEN) must include a port between 1 and 65535")
+		return errors.New("listen (CHEESESHOP_LISTEN) must include a port between 1 and 65535")
 	}
 	base, err := url.Parse(c.PublicBaseURL)
 	if err != nil || base == nil {
-		return errors.New("public_base_url (NUGET_PROXY_PUBLIC_BASE_URL) must be an absolute HTTP(S) URL")
+		return errors.New("public_base_url (CHEESESHOP_PUBLIC_BASE_URL) must be an absolute HTTP(S) URL")
 	}
 	if (base.Scheme != "http" && base.Scheme != "https") || base.Hostname() == "" ||
 		base.User != nil || base.RawQuery != "" || base.ForceQuery || base.Fragment != "" || base.Opaque != "" {
-		return errors.New("public_base_url (NUGET_PROXY_PUBLIC_BASE_URL) must be an absolute HTTP(S) URL without credentials, query, or fragment")
+		return errors.New("public_base_url (CHEESESHOP_PUBLIC_BASE_URL) must be an absolute HTTP(S) URL without credentials, query, or fragment")
 	}
 	if port := base.Port(); port != "" {
 		number, err := strconv.Atoi(port)
 		if err != nil || number < 1 || number > 65535 {
-			return errors.New("public_base_url (NUGET_PROXY_PUBLIC_BASE_URL) has an invalid port")
+			return errors.New("public_base_url (CHEESESHOP_PUBLIC_BASE_URL) has an invalid port")
 		}
 	}
 	basePath := strings.TrimRight(base.Path, "/")
 	if base.RawPath != "" || strings.ContainsAny(base.Path, "\\ \t\r\n") ||
 		(basePath != "" && path.Clean(basePath) != basePath) {
-		return errors.New("public_base_url (NUGET_PROXY_PUBLIC_BASE_URL) must have a normalized, unescaped path")
+		return errors.New("public_base_url (CHEESESHOP_PUBLIC_BASE_URL) must have a normalized, unescaped path")
 	}
 	if _, err := policy.New(c.Allow); err != nil {
-		return fmt.Errorf("allow (NUGET_PROXY_ALLOW): %w", err)
+		return fmt.Errorf("allow (CHEESESHOP_ALLOW): %w", err)
 	}
 	if strings.TrimSpace(c.Cache.Dir) == "" {
-		return errors.New("cache.dir (NUGET_PROXY_CACHE_DIR) must not be empty")
+		return errors.New("cache.dir (CHEESESHOP_CACHE_DIR) must not be empty")
 	}
 	if c.Cache.MaxObjectBytes <= 0 || c.Cache.MaxBytes <= 64<<10 ||
 		c.Cache.MaxObjectBytes > c.Cache.MaxBytes-(64<<10) {
-		return errors.New("cache.max_bytes (NUGET_PROXY_CACHE_MAX_BYTES) must exceed cache.max_object_bytes (NUGET_PROXY_CACHE_MAX_OBJECT_BYTES) by at least 64 KiB; both must be positive")
+		return errors.New("cache.max_bytes (CHEESESHOP_CACHE_MAX_BYTES) must exceed cache.max_object_bytes (CHEESESHOP_CACHE_MAX_OBJECT_BYTES) by at least 64 KiB; both must be positive")
 	}
 	if c.Cache.MetadataTTL <= 0 {
-		return errors.New("cache.metadata_ttl (NUGET_PROXY_CACHE_METADATA_TTL) must be positive")
+		return errors.New("cache.metadata_ttl (CHEESESHOP_CACHE_METADATA_TTL) must be positive")
 	}
 	if c.Upstream.Timeout <= 0 {
-		return errors.New("upstream.timeout (NUGET_PROXY_UPSTREAM_TIMEOUT) must be positive")
+		return errors.New("upstream.timeout (CHEESESHOP_UPSTREAM_TIMEOUT) must be positive")
 	}
 	if c.Upstream.MaxConcurrent <= 0 {
-		return errors.New("upstream.max_concurrent (NUGET_PROXY_UPSTREAM_MAX_CONCURRENT) must be positive")
+		return errors.New("upstream.max_concurrent (CHEESESHOP_UPSTREAM_MAX_CONCURRENT) must be positive")
 	}
 	return nil
 }

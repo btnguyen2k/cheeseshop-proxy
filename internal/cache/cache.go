@@ -118,7 +118,7 @@ func New(ctx context.Context, options Options, logger *slog.Logger) (*Cache, err
 }
 
 func (c *Cache) Check() error {
-	file, err := os.CreateTemp(c.options.Dir, "nuget-cache-*.tmp")
+	file, err := os.CreateTemp(c.options.Dir, "cheeseshop-cache-*.tmp")
 	if err != nil {
 		return fmt.Errorf("check cache directory: %w", err)
 	}
@@ -259,7 +259,7 @@ func (c *Cache) store(key string, response *http.Response) (err error) {
 		c.mu.Unlock()
 	}()
 
-	file, err := os.CreateTemp(c.options.Dir, "nuget-cache-*.tmp")
+	file, err := os.CreateTemp(c.options.Dir, "cheeseshop-cache-*.tmp")
 	if err != nil {
 		return fmt.Errorf("create cache object: %w", err)
 	}
@@ -320,7 +320,7 @@ func (c *Cache) store(key string, response *http.Response) (err error) {
 	if err := file.Close(); err != nil {
 		return err
 	}
-	suffix := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(tempPath), "nuget-cache-"), ".tmp")
+	suffix := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(tempPath), "cheeseshop-cache-"), ".tmp")
 	finalPath := filepath.Join(c.options.Dir, digest(key)+"-"+suffix+".cache")
 	if err := os.Rename(tempPath, finalPath); err != nil {
 		return fmt.Errorf("publish cache object: %w", err)
@@ -389,7 +389,7 @@ func (c *Cache) load() error {
 	}
 	for _, file := range files {
 		name := file.Name()
-		if file.Type().IsRegular() && strings.HasPrefix(name, "nuget-cache-") && strings.HasSuffix(name, ".tmp") {
+		if file.Type().IsRegular() && strings.HasPrefix(name, "cheeseshop-cache-") && strings.HasSuffix(name, ".tmp") {
 			if err := os.Remove(filepath.Join(c.options.Dir, name)); err != nil {
 				return fmt.Errorf("remove incomplete cache object: %w", err)
 			}

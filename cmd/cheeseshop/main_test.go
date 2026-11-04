@@ -35,9 +35,9 @@ func TestRunGracefulShutdown(t *testing.T) {
 func testRunGracefulShutdown(t *testing.T, environment bool) {
 	t.Helper()
 	for _, name := range []string{
-		"NUGET_PROXY_LISTEN", "NUGET_PROXY_PUBLIC_BASE_URL", "NUGET_PROXY_ALLOW",
-		"NUGET_PROXY_CACHE_DIR", "NUGET_PROXY_CACHE_MAX_BYTES", "NUGET_PROXY_CACHE_MAX_OBJECT_BYTES",
-		"NUGET_PROXY_CACHE_METADATA_TTL", "NUGET_PROXY_UPSTREAM_TIMEOUT", "NUGET_PROXY_UPSTREAM_MAX_CONCURRENT",
+		"CHEESESHOP_LISTEN", "CHEESESHOP_PUBLIC_BASE_URL", "CHEESESHOP_ALLOW",
+		"CHEESESHOP_CACHE_DIR", "CHEESESHOP_CACHE_MAX_BYTES", "CHEESESHOP_CACHE_MAX_OBJECT_BYTES",
+		"CHEESESHOP_CACHE_METADATA_TTL", "CHEESESHOP_UPSTREAM_TIMEOUT", "CHEESESHOP_UPSTREAM_MAX_CONCURRENT",
 	} {
 		t.Setenv(name, "")
 		if err := os.Unsetenv(name); err != nil {
@@ -56,11 +56,11 @@ func testRunGracefulShutdown(t *testing.T, environment bool) {
 	filename := filepath.Join(directory, "config.yaml")
 	document := fmt.Sprintf("listen: %q\npublic_base_url: http://%s\ncache:\n  dir: '%s'\n", address, address, filepath.Join(directory, "cache"))
 	if environment {
-		document = "public_base_url: /invalid\nallow: [Outside.Subset]\n"
-		t.Setenv("NUGET_PROXY_LISTEN", address)
-		t.Setenv("NUGET_PROXY_PUBLIC_BASE_URL", "http://"+address)
-		t.Setenv("NUGET_PROXY_ALLOW", "Ddth.*")
-		t.Setenv("NUGET_PROXY_CACHE_DIR", filepath.Join(directory, "cache"))
+		document = "public_base_url: /invalid\nallow: [outside-subset]\n"
+		t.Setenv("CHEESESHOP_LISTEN", address)
+		t.Setenv("CHEESESHOP_PUBLIC_BASE_URL", "http://"+address)
+		t.Setenv("CHEESESHOP_ALLOW", "company-*")
+		t.Setenv("CHEESESHOP_CACHE_DIR", filepath.Join(directory, "cache"))
 	}
 	if err := os.WriteFile(filename, []byte(document), 0600); err != nil {
 		t.Fatal(err)
@@ -85,7 +85,7 @@ func testRunGracefulShutdown(t *testing.T, environment bool) {
 		}
 	}
 	if started && environment {
-		response, err := client.Get("http://" + address + "/v3/flatcontainer/outside.subset/index.json")
+		response, err := client.Get("http://" + address + "/simple/outside-subset/")
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -1,6 +1,8 @@
 .git
 .github
 .cache
+.local
+cheeseshop
 *.exe
 *.test
 coverage.*
