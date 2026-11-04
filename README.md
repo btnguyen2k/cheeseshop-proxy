@@ -1,15 +1,10 @@
-# cheeseshop
-
-**Version:** v0.1.0
-
-[![Actions Status](https://github.com/btnguyen2k/cheeseshop-proxy/actions/workflows/ci.yaml/badge.svg)](https://github.com/btnguyen2k/cheeseshop-proxy/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE.md)
+[![Actions Status](https://github.com/btnguyen2k/cheeseshop-proxy/actions/workflows/ci.yaml/badge.svg)](https://github.com/btnguyen2k/cheeseshop-proxy/actions)
+[![Release](https://img.shields.io/github/release/btnguyen2k/cheeseshop-proxy.svg?style=flat-square)](RELEASE-NOTES.md)
 
-**cheeseshop** is a standalone, lightweight, read-only proxy for public PyPI,
+**cheeseshop-proxy** is a standalone, lightweight, read-only proxy for public PyPI,
 implemented in Go. Expose only approved Python projects through the Simple
-Repository API, with an on-demand bounded disk cache. The repository and Docker
-image are named `cheeseshop-proxy`; the application and executable are named
-`cheeseshop`.
+Repository API, with an on-demand bounded disk cache.
 
 The initial implementation supports **allow rules only**. Block rules, uploads,
 private package hosting, search, and full/offline mirroring are not implemented.
@@ -34,20 +29,25 @@ go build -o ./cheeseshop ./cmd/cheeseshop
 
 ### Run with Docker
 
-Build the image locally until the first cheeseshop image has been published:
+A prebuilt Docker image is published for each release as
+`btnguyen2k/cheeseshop-proxy` on
+[Docker Hub](https://hub.docker.com/r/btnguyen2k/cheeseshop-proxy).
+
+Use `btnguyen2k/cheeseshop-proxy:<tag>`, replacing `<tag>` with a published version
+(for example, `0.1.0`) or `release` for the most recently published release.
+The image supports Linux `amd64` and `arm64`.
 
 ```sh
-docker build -t cheeseshop:local .
+docker pull "btnguyen2k/cheeseshop-proxy:<tag>"
 docker run --rm -p 8080:8080 \
   --env "CHEESESHOP_ALLOW=requests,urllib3,idna,charset-normalizer,certifi" \
   --env "CHEESESHOP_PUBLIC_BASE_URL=http://localhost:8080" \
   --mount "type=volume,source=cheeseshop-cache,target=/data" \
-  cheeseshop:local
+  "btnguyen2k/cheeseshop-proxy:<tag>"
 ```
 
-The publishing workflow targets `btnguyen2k/cheeseshop-proxy`. The image includes
-`config.yaml`; environment variables override it. The volume preserves cached
-content and the local URL-signing key between container runs.
+The image includes `config.yaml`; environment variables override it. The volume
+preserves cached content and the local URL-signing key between container runs.
 
 ## Use with pip
 

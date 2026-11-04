@@ -1,11 +1,9 @@
-# cheeseshop
+**cheeseshop-proxy** is a standalone, lightweight, read-only proxy for public PyPI,
+implemented in Go. Expose only approved Python projects through the Simple
+Repository API, with an on-demand bounded disk cache.
 
-A lightweight, read-only public PyPI proxy written in Go. Expose approved
-Python projects through the Simple HTML/JSON API with a bounded persistent cache.
-The application is **cheeseshop**; the image repository is **cheeseshop-proxy**.
-
-This MVP supports **allow rules only**. Uploads, private hosting, search, block
-rules, and full/offline mirroring are not implemented.
+The initial implementation supports **allow rules only**. Block rules, uploads,
+private package hosting, search, and full/offline mirroring are not implemented.
 
 ## Run
 
